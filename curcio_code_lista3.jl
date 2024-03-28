@@ -4,7 +4,6 @@ using Distributions, LinearAlgebra, Plots, PlotlyJS, NLsolve
 ###### PS3 - Methods ######
 ###########################
 
-
 # Parameters
 beta = 0.987
 mu = 2
@@ -233,10 +232,10 @@ Plots.savefig(combined_plot, "collocation_results.png")
 ######### Collocation + FEA ##############
 
 # Create collocation points between k1 and kN
-num_points = 11
-limit_points = zeros(11)
+num_points = 15
+limit_points = zeros(num_points)
 limit_points[1] = k1
-limit_points[11] = kN
+limit_points[num_points] = kN
 
 for i in 2:num_points-1
     index = Int(1 + floor(Nk / (num_points-1)) * (i - 1))
@@ -244,7 +243,7 @@ for i in 2:num_points-1
 end
 
 # Define the basis function φ(i, k) for piecewise linear approximation
-function phi_func(i, k; limit_points=limit_points, num_points=num_points)
+function psi_func(i, k; limit_points=limit_points, num_points=num_points)
     if i == 1
         return k < limit_points[i] ? 1 : (k >= limit_points[i] && k <= limit_points[i+1] ? (limit_points[i+1] - k) / (limit_points[i+1] - limit_points[i]) : 0)
     elseif i == num_points
@@ -257,7 +256,7 @@ end
 
 # Compute the estimated consumption 
 function c_hat_func_fe(A, k, z)
-    return sum([A[i, z] * phi_func(i, k) for i in 1:num_points])
+    return sum([A[i, z] * psi_func(i, k) for i in 1:num_points])
 end
 
 # Compute the residuals for the optimization problem
@@ -379,118 +378,57 @@ function residual_function_fe_galerkin(A, k, z)
 end
 
 
-# Adjust the phi function to get upper and lower bounds
-function phi_func_bounds(i, k; limit_points=limit_points, num_points=num_points)
-    phi_lower_value = 0
-    phi_upper_value = 0
+# Adjust the psi function to get upper and lower bounds
+function psi_func_bounds(i, k; limit_points=limit_points, num_points=num_points)
+    psi_lower_value = 0
+    psi_upper_value = 0
 
     # Lower bound
     if i == 1
         if k < limit_points[i]
-            phi_lower_value = 1
+            psi_lower_value = 1
         elseif k <= limit_points[i] && k >= limit_points[i-1]
-            phi_lower_value = (k - limit_points[i-1]) / (limit_points[i] - limit_points[i-1])
+            psi_lower_value = (k - limit_points[i-1]) / (limit_points[i] - limit_points[i-1])
         end
     elseif i > 1 && i <= num_points
         if k <= limit_points[i] && k >= limit_points[i-1]
-            phi_lower_value = (k - limit_points[i-1]) / (limit_points[i] - limit_points[i-1])
+            psi_lower_value = (k - limit_points[i-1]) / (limit_points[i] - limit_points[i-1])
         end
     end
 
     # Upper bound
     if i == num_points
         if k > limit_points[i]
-            phi_upper_value = 1
+            psi_upper_value = 1
         end
     elseif i < num_points
         if k >= limit_points[i] && k <= limit_points[i+1]
-            phi_upper_value = (limit_points[i+1] - k) / (limit_points[i+1] - limit_points[i])
+            psi_upper_value = (limit_points[i+1] - k) / (limit_points[i+1] - limit_points[i])
         end
     end
 
-    return (phi_lower_value, phi_upper_value)
-end
-
-### meu codigo nao ta funcionando: alternativa é fazer igual o da helena
-#Function for Gauss-Chebyshev quadrature
-function quadrature_function(A; num_points=num_points, z_grid=z_grid, Nz = Nz, limit_points=limit_points)
-    # Generate Chebyshev roots for a polynomial of degree p
-    roots = roots_function(num_points)
-
-    # Precompute weights for each Chebyshev root, to be used in the quadrature formula
-    # This is based on the Gauss-Chebyshev weighting function
-    weights = (pi / num_points) .* sqrt.(1 .- roots.^2)
-    
-    # Initialize the matrix to store the integral results for each combination of p and N
-    integral = zeros(num_points, Nz)
-
-    # Iterate over all scenarios N
-    for j in 1:Nz
-        # Iterate over each polynomial degree p
-        for i in 1:num_points
-            # Determine the integration limits based on the position in the array
-            # For the first and last elements, use special cases; otherwise, use adjacent elements
-            # result = condition ? value_if_true : value_if_false
-            a = i == 1 ? limit_points[i] : limit_points[i-1]
-            b = i == num_points ? limit_points[i] : limit_points[i+1]
-
-            # Calculate the transformed Chebyshev roots to match the integration limits
-            k = ((roots[i] .+ 1) .* (b - a) ./ 2) .+ a
-
-            # Get phi bounds
-            phi_lower, phi_upper = phi_func_bounds(i, k)
-
-            # Calculate function values at each transformed root for both lower and upper functions
-            # This involves vectorized computation of the function value, including the residual and phi functions
-            # Adjust these function calls if they cannot naturally handle vectorized inputs
-            f_lower = residual_function_fe_galerkin(A, k, j) .* phi_lower .* sqrt.(1 .- roots[i].^2)
-            f_upper = residual_function_fe_galerkin(A, k, j) .* phi_upper .* sqrt.(1 .- roots[i].^2)
-
-            # Compute the integral for the current (i, j) pair using the Gauss-Chebyshev formula
-            # This step involves summing up the product of precomputed weights and the function values
-            integral_value = ((b - a) ./ 2) .* sum(weights .* (f_lower + f_upper))
-            integral[i, j] = integral_value
-        end
-    end
-
-    return integral
+    return (psi_lower_value, psi_upper_value)
 end
 
 
-function quadrature_function(A; num_points=num_points, z_grid=z_grid, Nz=Nz, limit_points=limit_points)
+function quadrature_function(A)
     # Generate Chebyshev roots for a polynomial of degree p
     roots = roots_function(num_points)
-
-    # Precompute weights for each Chebyshev root, to be used in the quadrature formula
-    weights = (pi / num_points) .* sqrt.(1 .- roots.^2)
     
-    # Initialize the matrix to store the integral results for each combination of p and N
+    # Initialize the matrix to store the integral results
     integral = zeros(num_points, Nz)
 
     for j in 1:Nz
         for i in 1:num_points
-            # Determine the integration limits based on the position in the array
-            a = i == 1 ? limit_points[i] : limit_points[i-1]
-            b = i == num_points ? limit_points[i] : limit_points[i+1]
-
-            # Separate calculation for k_lower and k_upper
-            k_lower_vals = [((roots[i] + 1) * (a - limit_points[i-1]) / 2 + limit_points[i-1]) for root in roots]
-            k_upper_vals = [((roots[i] + 1) * (limit_points[i+1] - b) / 2 + b) for root in roots]
-
-            # Initialize f_lower and f_upper arrays
-            f_lower = zeros(num_points)
-            f_upper = zeros(num_points)
-
-            # Adjusted loop to calculate f_lower and f_upper using k_lower_vals and k_upper_vals
+            a, b = i == 1 ? (limit_points[i], limit_points[i+1]) : (i == num_points ? (limit_points[i-1], limit_points[i]) : (limit_points[i-1], limit_points[i+1]))
+            f = zeros(num_points)
+            
             for n in 1:num_points
-                phi_lower, phi_upper = phi_func_bounds(i, roots[n]) # Assuming phi_func_bounds is adjusted to return correct bounds
-
-                f_lower[n] = residual_function_fe_galerkin(A, k_lower_vals[n], j) * phi_lower * sqrt(1 - roots[n]^2)
-                f_upper[n] = residual_function_fe_galerkin(A, k_upper_vals[n], j) * phi_upper * sqrt(1 - roots[n]^2)
+                k = ((roots[n] + 1) * (b - a)) / 2 + a
+                f[n] = residual_function_fe_galerkin(A, k, j) * (i == 1 ? psi_func_bounds(i, k)[2] : (i == num_points ? psi_func_bounds(i, k)[1] : (psi_func_bounds(i, k)[1] + psi_func_bounds(i,k)[2]))) * sqrt(1 - roots[n]^2)
             end
-
-            # Compute the integral for the current (i, j) pair
-            integral[i, j] = ((b - a) / (2 * num_points)) * sum(weights .* (f_lower + f_upper))
+            
+            integral[i, j] = pi * (b - a) / (2num_points) * sum(f)
         end
     end
 
@@ -551,7 +489,7 @@ p3 = Plots.plot(k_grid, fea_garlekin_result[1], title = "(c) Euler Errors", lege
 
 # Combine plots into a 2x2 grid layout
 combined_plot = Plots.plot(p1, p2, p3, layout = (2, 2), size = (1200, 900))
-#Plots.savefig(combined_plot, "fea_garlekin_results.png")
+Plots.savefig(combined_plot, "fea_garlekin_results.png")
 
 
 
